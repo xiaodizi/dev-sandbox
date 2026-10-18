@@ -17,7 +17,7 @@
 ## 安装
 
 ```bash
-git clone <仓库地址> dev-sandbox
+git clone https://github.com/xiaodizi/dev-sandbox.git
 cd dev-sandbox
 pipx install .
 ```
@@ -129,9 +129,10 @@ dev-sandbox/
 ├── tests/              # 单元测试
 ├── run-in-docker.sh    # Shell 版本
 ├── USAGE.md            # 使用说明
-└── AGENT_INTEGRATION.md
+├── AGENT_INTEGRATION.md
+└── LICENSE
 ```
 
 ## 许可
 
-待定。
+[MIT](LICENSE)
