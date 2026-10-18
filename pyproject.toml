@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dev-sandbox"
+version = "0.1.0"
+description = "Run project commands inside a Docker Desktop sandbox"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+dev-sandbox = "dev_sandbox.cli:console_main"
+
+[tool.setuptools]
+packages = ["dev_sandbox"]
+
+[tool.setuptools.package-data]
+dev_sandbox = ["skill/SKILL.md"]
