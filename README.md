@@ -61,6 +61,7 @@ dev-sandbox [--image 镜像] [--cpus N] [--memory M] [--network 网络] -- <命�
 | `--cpus` | CPU 上限 | `--cpus 2` |
 | `--memory` | 内存上限 | `--memory 2g` |
 | `--network` | 网络模式，`none` 表示断网 | `--network none` |
+| `--docker` | 启动专用 Docker daemon，容器内可用 `docker` 命令，不能与 `--network` 同用 | `--docker` |
 | `-- 命令...` | 容器内执行的命令，放在 `--` 之后 | `-- npm test` |
 
 不带 `--` 命令时，按镜像自动选择默认命令：
@@ -88,6 +89,23 @@ dev-sandbox --image maven:3.9-eclipse-temurin-11 -- mvn -B test
 # 断网运行，限制资源
 dev-sandbox --image python:3.11-slim --network none --cpus 2 --memory 2g -- pytest
 ```
+
+### 在沙箱内使用 Docker
+
+只有命令本身需要 `docker`（如 `build`、`run`、`inspect`、`compose`、`pull/push`）时才需要。跑 Maven、npm、Python 等普通命令不要加 `--docker`。
+
+```bash
+# 使用 docker:* 镜像时自动开启
+dev-sandbox --image docker:27-cli -- docker version
+
+# 在 Python 镜像里构建并运行镜像
+dev-sandbox --docker --image python:3.11-slim -- sh -c 'docker build -t app:test . && docker run --rm app:test ls -l /app'
+```
+
+- 沙箱使用独立的 `docker:27-dind` daemon，通过 TLS 访问，**不挂载宿主机的 Docker socket**，也不开放未认证的 TCP 端口。
+- 沙箱 daemon 看不到宿主机镜像，基础镜像从 registry 拉取。
+- 每次运行都会新建 daemon，结束后删除（包括其中的镜像）。构建和使用镜像必须放在同一条命令里完成。
+- daemon 以 `--privileged` 运行，首次会拉取 `docker:27-dind`。
 
 ## 配置说明
 

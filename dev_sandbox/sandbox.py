@@ -3,11 +3,15 @@
 import os
 import re
 import subprocess
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 DOCKER_TIMEOUT_SECONDS = 15
+DIND_IMAGE = "docker:27-dind"
+DIND_HOST = "docker"
+DIND_READY_TIMEOUT_SECONDS = 60
 
 
 class SandboxError(RuntimeError):
@@ -40,15 +44,24 @@ class SandboxOptions:
     cpus: str | None = None
     memory: str | None = None
     network: str | None = None
+    docker: bool = False
     command: tuple = field(default_factory=tuple)
 
 
+def image_repo(image: str) -> str:
+    return image.rsplit("/", 1)[-1].split(":", 1)[0]
+
+
 def detect_ecosystem(image: str) -> Ecosystem | None:
-    repo = image.rsplit("/", 1)[-1].split(":", 1)[0]
+    repo = image_repo(image)
     for eco in ECOSYSTEMS:
         if repo.split("-", 1)[0] in eco.keywords:
             return eco
     return None
+
+
+def needs_docker_sidecar(options: SandboxOptions, image: str) -> bool:
+    return options.docker or image_repo(image) == "docker"
 
 
 def safe_container_name(project_dir: Path) -> str:
@@ -80,7 +93,9 @@ def build_docker_args(project_dir: Path, options: SandboxOptions, container_name
         args += ["--cpus", options.cpus]
     if options.memory:
         args += ["--memory", options.memory]
-    if options.network:
+    if needs_docker_sidecar(options, image):
+        args += docker_access_args(container_name)
+    elif options.network:
         args += ["--network", options.network]
     if eco is not None:
         cache_host = Path(os.path.expanduser(eco.cache_host))
@@ -111,9 +126,63 @@ def check_docker(runner=subprocess.run) -> None:
         raise SandboxError(f"Docker 不可用：{detail[0]}")
 
 
+def docker_session_names(container_name: str) -> dict:
+    return {"net": f"{container_name}-net", "dind": f"{container_name}-dind",
+            "certs": f"{container_name}-certs"}
+
+
+def docker_access_args(container_name: str) -> list:
+    names = docker_session_names(container_name)
+    return ["--network", names["net"],
+            "-v", f"{names['certs']}:/certs/client:ro",
+            "-e", f"DOCKER_HOST=tcp://{DIND_HOST}:2376",
+            "-e", "DOCKER_TLS_VERIFY=1",
+            "-e", "DOCKER_CERT_PATH=/certs/client"]
+
+
+def _run_docker(runner, *args) -> subprocess.CompletedProcess:
+    result = runner(["docker", *args], capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip() or "未知错误"
+        raise SandboxError(f"docker {args[0]} 失败：{detail}")
+    return result
+
+
+def start_dind(container_name: str, runner) -> None:
+    names = docker_session_names(container_name)
+    _run_docker(runner, "network", "create", names["net"])
+    _run_docker(runner, "run", "-d", "--privileged", "--name", names["dind"],
+                "--network", names["net"], "--network-alias", DIND_HOST,
+                "-e", "DOCKER_TLS_CERTDIR=/certs",
+                "-v", f"{names['certs']}:/certs/client", DIND_IMAGE)
+    deadline = time.monotonic() + DIND_READY_TIMEOUT_SECONDS
+    while runner(["docker", "exec", names["dind"], "docker", "info"],
+                 capture_output=True, text=True).returncode != 0:
+        if time.monotonic() > deadline:
+            raise SandboxError(f"Docker 沙箱 daemon 超过 {DIND_READY_TIMEOUT_SECONDS}s 未就绪")
+        time.sleep(1)
+
+
+def stop_dind(container_name: str, runner) -> None:
+    names = docker_session_names(container_name)
+    runner(["docker", "rm", "-f", "-v", names["dind"]], capture_output=True, text=True)
+    runner(["docker", "network", "rm", names["net"]], capture_output=True, text=True)
+    runner(["docker", "volume", "rm", names["certs"]], capture_output=True, text=True)
+
+
 def run_in_sandbox(project_dir: Path, options: SandboxOptions, runner=subprocess.run) -> int:
-    check_docker(runner)
     image = options.image or ECOSYSTEMS[0].image
+    sidecar = needs_docker_sidecar(options, image)
+    if sidecar and options.network:
+        raise SandboxError("Docker 侧车模式与 --network 不能同时使用")
+    check_docker(runner)
     prepare_host_caches(image)
-    args = build_docker_args(project_dir, options, safe_container_name(project_dir))
-    return runner(args).returncode
+    container_name = safe_container_name(project_dir)
+    args = build_docker_args(project_dir, options, container_name)
+    if not sidecar:
+        return runner(args).returncode
+    try:
+        start_dind(container_name, runner)
+        return runner(args).returncode
+    finally:
+        stop_dind(container_name, runner)

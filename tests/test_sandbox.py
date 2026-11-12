@@ -134,6 +134,73 @@ class CliTest(unittest.TestCase):
         self.assertEqual(options.command, ("python", "t.py"))
         self.assertEqual(options.image, "python:3.11-slim")
 
+    def test_cli_passes_docker_flag(self):
+        with mock.patch("dev_sandbox.cli.run_in_sandbox", return_value=0) as run:
+            main(["--docker", "--image", "docker:27-cli", "--", "docker", "version"], project_dir=Path("/tmp"))
+        self.assertTrue(run.call_args.args[1].docker)
+
+
+class DockerSidecarTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.project = Path(self.tmp.name).resolve()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_docker_mode_wires_tls_endpoint_without_socket(self):
+        opts = SandboxOptions(image="docker:27-cli", docker=True, command=("docker", "version"))
+        args = build_docker_args(self.project, opts, "sandbox-p-1")
+        self.assertIn("sandbox-p-1-net", args)
+        self.assertIn("DOCKER_HOST=tcp://docker:2376", args)
+        self.assertIn("DOCKER_TLS_VERIFY=1", args)
+        self.assertIn("sandbox-p-1-certs:/certs/client:ro", args)
+        self.assertFalse(any("docker.sock" in a for a in args))
+        self.assertEqual(args[-2:], ["docker", "version"])
+
+    def test_docker_image_enables_sidecar_without_flag(self):
+        args = build_docker_args(self.project, SandboxOptions(image="docker:27-cli"), "sandbox-p-1")
+        self.assertIn("DOCKER_HOST=tcp://docker:2376", args)
+
+    def test_docker_and_network_are_mutually_exclusive(self):
+        opts = SandboxOptions(image="python:3.11-slim", docker=True, network="none")
+        with self.assertRaises(SandboxError):
+            run_in_sandbox(self.project, opts, runner=lambda *a, **k: completed(0))
+
+    def test_sidecar_started_before_run_and_cleaned_up_after(self):
+        calls = []
+
+        def runner(args, **kwargs):
+            calls.append(args)
+            if args[:2] == ["docker", "run"] and "--privileged" not in args:
+                return subprocess.CompletedProcess(args, 7)
+            return completed(0)
+
+        code = run_in_sandbox(self.project, SandboxOptions(image="docker:27-cli", docker=True),
+                              runner=runner)
+        self.assertEqual(code, 7)
+        joined = [" ".join(c) for c in calls]
+        dind_start = next(i for i, c in enumerate(joined) if "--privileged" in c)
+        app_run = next(i for i, c in enumerate(joined) if c.startswith("docker run --rm"))
+        self.assertLess(dind_start, app_run)
+        self.assertTrue(any(c.startswith("docker rm -f -v sandbox-") for c in joined))
+        self.assertTrue(any(c.startswith("docker network rm sandbox-") for c in joined))
+        self.assertTrue(any(c.startswith("docker volume rm sandbox-") for c in joined))
+
+    def test_sidecar_cleaned_up_when_start_fails(self):
+        calls = []
+
+        def runner(args, **kwargs):
+            calls.append(args)
+            if "--privileged" in args:
+                return completed(1, "no privileges")
+            return completed(0)
+
+        with self.assertRaises(SandboxError):
+            run_in_sandbox(self.project, SandboxOptions(image="docker:27-cli", docker=True),
+                           runner=runner)
+        self.assertTrue(any(c[:3] == ["docker", "rm", "-f"] for c in calls))
+
 
 if __name__ == "__main__":
     unittest.main()

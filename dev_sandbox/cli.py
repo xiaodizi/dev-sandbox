@@ -14,6 +14,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cpus", help="CPU 上限，例如 2")
     parser.add_argument("--memory", help="内存上限，例如 2g")
     parser.add_argument("--network", help="网络模式，例如 none；默认 Docker 网络")
+    parser.add_argument("--docker", action="store_true",
+                        help="启动专用 Docker daemon 侧车，容器内可用 docker 命令（不能与 --network 同用）")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="容器内执行的命令，放在 -- 之后")
     return parser
 
@@ -40,7 +42,7 @@ def main(argv=None, project_dir: Path | None = None) -> int:
     args = build_parser().parse_args(argv)
     command = tuple(c for c in args.command if c != "--")
     options = SandboxOptions(image=args.image, cpus=args.cpus, memory=args.memory,
-                             network=args.network, command=command)
+                             network=args.network, docker=args.docker, command=command)
     try:
         return run_in_sandbox(project_dir or Path.cwd(), options)
     except SandboxError as exc:

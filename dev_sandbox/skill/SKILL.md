@@ -36,6 +36,20 @@ dev-sandbox --image node:20-alpine -- npm test
 dev-sandbox --image maven:3.9-eclipse-temurin-11 -- mvn -B test
 ```
 
+## 在沙箱内操作 Docker
+
+仅当命令本身需要 docker（`docker build`、`docker run`、`docker inspect`、`docker compose`、`docker pull/push`）时使用。
+
+```bash
+dev-sandbox --image docker:27-cli -- docker build -t app:test .
+dev-sandbox --docker --image python:3.11-slim -- sh -c 'docker build -t app:test . && docker run --rm app:test ls -l /app'
+```
+
+- 跑 Maven、npm、Python、Nginx 等不需要 docker 的命令，不要加 `--docker`。
+- `--docker` 不能与 `--network` 同时使用。
+- 沙箱内的 daemon 是独立的，看不到宿主机镜像，需要的基础镜像会从 registry 拉取。
+- 每次运行都会新建并在结束后删除 daemon，其中的镜像不会保留。构建和使用镜像要放在同一条命令里完成。
+
 ## 规则
 
 - 不要直接在宿主机运行 `python`、`pytest`、`npm`、`mvn` 执行项目代码，统一走上面的命令。
