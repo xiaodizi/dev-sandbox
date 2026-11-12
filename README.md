@@ -22,11 +22,20 @@ cd dev-sandbox
 pipx install .
 ```
 
-升级到新版本：
+升级到新版本（本地仓库）：
 
 ```bash
 pipx install --force .
 ```
+
+直接从 GitHub 安装或更新，无需先 clone：
+
+```bash
+pipx install --force git+https://github.com/xiaodizi/dev-sandbox.git
+dev-sandbox install
+```
+
+升级后需要再次执行 `dev-sandbox install`，把新的 SKILL.md 同步到 AI Coding 工具，并重启对应工具才会生效。
 
 ## 安装到 AI Coding 工具
 

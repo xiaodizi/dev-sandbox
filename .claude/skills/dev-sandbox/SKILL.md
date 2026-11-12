@@ -47,6 +47,7 @@ dev-sandbox --docker --image python:3.11-slim -- sh -c 'docker build -t app:test
 
 - 跑 Maven、npm、Python、Nginx 等不需要 docker 的命令，不要加 `--docker`。
 - `--docker` 不能与 `--network` 同时使用。
+- 不要在命令里设置或覆盖 `DOCKER_HOST`，沙箱已经通过它指向内部 daemon。直接写 `docker version`，不要写 `DOCKER_HOST=unix:///var/run/docker.sock docker ...`。
 - 沙箱内的 daemon 是独立的，看不到宿主机镜像，需要的基础镜像会从 registry 拉取。
 - 每次运行都会新建并在结束后删除 daemon，其中的镜像不会保留。构建和使用镜像要放在同一条命令里完成。
 
