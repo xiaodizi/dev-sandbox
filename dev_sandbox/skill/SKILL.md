@@ -49,7 +49,20 @@ dev-sandbox --docker --image python:3.11-slim -- sh -c 'docker build -t app:test
 - `--docker` 不能与 `--network` 同时使用。
 - 不要在命令里设置或覆盖 `DOCKER_HOST`，沙箱已经通过它指向内部 daemon。直接写 `docker version`，不要写 `DOCKER_HOST=unix:///var/run/docker.sock docker ...`。
 - 沙箱内的 daemon 是独立的，看不到宿主机镜像，需要的基础镜像会从 registry 拉取。
-- 每次运行都会新建并在结束后删除 daemon，其中的镜像不会保留。构建和使用镜像要放在同一条命令里完成。
+- **每次运行都是全新的 daemon，结束后删除，镜像不会保留到下一次调用。** 构建后要检查或使用该镜像（`docker image inspect`、`docker run`、运行测试等），必须和 `docker build` 放在同一条 `sh -c` 命令里，用 `&&` 连接。
+
+错误示例（两次调用，第二次必然找不到镜像）：
+
+```bash
+dev-sandbox --image docker:27-cli -- docker build -t app:test .
+dev-sandbox --image docker:27-cli -- docker image inspect app:test   # No such image
+```
+
+正确示例：
+
+```bash
+dev-sandbox --image docker:27-cli -- sh -c 'docker build -t app:test . && docker image inspect app:test'
+```
 
 ## 规则
 
