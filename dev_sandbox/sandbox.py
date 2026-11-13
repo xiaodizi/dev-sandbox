@@ -45,6 +45,7 @@ class SandboxOptions:
     memory: str | None = None
     network: str | None = None
     docker: bool = False
+    mounts: tuple = field(default_factory=tuple)
     command: tuple = field(default_factory=tuple)
 
 
@@ -58,6 +59,22 @@ def detect_ecosystem(image: str) -> Ecosystem | None:
         if repo.split("-", 1)[0] in eco.keywords:
             return eco
     return None
+
+
+def parse_mount(spec: str) -> str:
+    parts = spec.split(":")
+    if len(parts) not in (2, 3):
+        raise SandboxError(f"--mount 格式应为 HOST:CONTAINER[:ro]，收到：{spec}")
+    host, container = os.path.expanduser(parts[0]), parts[1]
+    if not os.path.isabs(host):
+        raise SandboxError(f"--mount 宿主机路径必须是绝对路径或 ~ 开头：{parts[0]}")
+    if not os.path.exists(host):
+        raise SandboxError(f"--mount 宿主机路径不存在：{host}")
+    if not container.startswith("/"):
+        raise SandboxError(f"--mount 容器路径必须是绝对路径：{container}")
+    if len(parts) == 3 and parts[2] != "ro":
+        raise SandboxError(f"--mount 只支持 ro 模式：{spec}")
+    return ":".join([host, container, *parts[2:]])
 
 
 def needs_docker_sidecar(options: SandboxOptions, image: str) -> bool:
@@ -100,6 +117,8 @@ def build_docker_args(project_dir: Path, options: SandboxOptions, container_name
     if eco is not None:
         cache_host = Path(os.path.expanduser(eco.cache_host))
         args += ["-v", f"{cache_host}:{eco.cache_container}"]
+    for mount in options.mounts:
+        args += ["-v", parse_mount(mount)]
 
     args.append(image)
     command = tuple(options.command) or (default_command(project_dir, eco) if eco else ())
@@ -175,10 +194,10 @@ def run_in_sandbox(project_dir: Path, options: SandboxOptions, runner=subprocess
     sidecar = needs_docker_sidecar(options, image)
     if sidecar and options.network:
         raise SandboxError("Docker 侧车模式与 --network 不能同时使用")
-    check_docker(runner)
-    prepare_host_caches(image)
     container_name = safe_container_name(project_dir)
     args = build_docker_args(project_dir, options, container_name)
+    check_docker(runner)
+    prepare_host_caches(image)
     if not sidecar:
         return runner(args).returncode
     try:

@@ -36,6 +36,17 @@ dev-sandbox --image node:20-alpine -- npm test
 dev-sandbox --image maven:3.9-eclipse-temurin-11 -- mvn -B test
 ```
 
+## 挂载宿主机文件或目录
+
+需要把项目目录之外的文件（如配置、凭据文件）让容器读取时，用 `--mount`，可重复：
+
+```bash
+dev-sandbox --mount ~/work/app/jhpt.xml:/config/jhpt.xml:ro -- mvn test -s /config/jhpt.xml -Dmaven.repo.local=/root/.m2/repository
+```
+
+- 格式：`HOST:CONTAINER[:ro]`，宿主机路径必须是绝对路径或 `~` 开头且已存在，容器路径必须是绝对路径。
+- 只支持 `ro` 模式；建议对凭据文件总是加 `:ro`，且只挂载需要的单个文件。
+
 ## 在沙箱内操作 Docker
 
 仅当命令本身需要 docker（`docker build`、`docker run`、`docker inspect`、`docker compose`、`docker pull/push`）时使用。

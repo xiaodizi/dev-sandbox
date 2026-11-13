@@ -204,3 +204,67 @@ class DockerSidecarTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MountOptionTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+        self.project = self.root / "proj"
+        self.project.mkdir()
+        self.config = self.root / "cfg" / "jhpt.xml"
+        self.config.parent.mkdir()
+        self.config.write_text("<settings/>")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_mount_adds_read_only_bind_for_single_file(self):
+        opts = SandboxOptions(image="maven:3.9-eclipse-temurin-11",
+                              mounts=(f"{self.config}:/config/jhpt.xml:ro",))
+        args = build_docker_args(self.project, opts, "n")
+        self.assertIn(f"{self.config}:/config/jhpt.xml:ro", args)
+        self.assertEqual(args[args.index(f"{self.config}:/config/jhpt.xml:ro") - 1], "-v")
+
+    def test_multiple_mounts_are_all_passed(self):
+        opts = SandboxOptions(image="python:3.11-slim",
+                              mounts=(f"{self.config}:/a", f"{self.root}:/b:ro"))
+        args = build_docker_args(self.project, opts, "n")
+        self.assertIn(f"{self.config}:/a", args)
+        self.assertIn(f"{self.root}:/b:ro", args)
+
+    def test_mount_arg_is_expanded_from_home(self):
+        with mock.patch("dev_sandbox.sandbox.os.path.expanduser", return_value=str(self.config)):
+            opts = SandboxOptions(image="python:3.11-slim", mounts=("~/x.xml:/config/x.xml:ro",))
+            args = build_docker_args(self.project, opts, "n")
+        self.assertIn(f"{self.config}:/config/x.xml:ro", args)
+
+    def test_relative_host_path_is_rejected(self):
+        opts = SandboxOptions(image="python:3.11-slim", mounts=("cfg/jhpt.xml:/config/jhpt.xml",))
+        with self.assertRaises(SandboxError):
+            run_in_sandbox(self.project, opts, runner=mock.Mock(return_value=completed()))
+
+    def test_missing_host_path_is_rejected_before_docker_runs(self):
+        runner = mock.Mock(return_value=completed())
+        opts = SandboxOptions(image="python:3.11-slim",
+                              mounts=(f"{self.root}/missing.xml:/config/x.xml",))
+        with self.assertRaises(SandboxError):
+            run_in_sandbox(self.project, opts, runner=runner)
+        runner.assert_not_called()
+
+    def test_container_path_must_be_absolute(self):
+        opts = SandboxOptions(image="python:3.11-slim", mounts=(f"{self.config}:config.xml",))
+        with self.assertRaises(SandboxError):
+            run_in_sandbox(self.project, opts, runner=mock.Mock(return_value=completed()))
+
+    def test_invalid_mode_is_rejected(self):
+        opts = SandboxOptions(image="python:3.11-slim", mounts=(f"{self.config}:/c:rw",))
+        with self.assertRaises(SandboxError):
+            run_in_sandbox(self.project, opts, runner=mock.Mock(return_value=completed()))
+
+    def test_cli_collects_repeated_mount_flags(self):
+        with mock.patch("dev_sandbox.cli.run_in_sandbox", return_value=0) as run:
+            main(["--mount", f"{self.config}:/config/jhpt.xml:ro", "--mount", f"{self.root}:/d",
+                  "--", "mvn", "test"], project_dir=Path("/tmp"))
+        self.assertEqual(run.call_args.args[1].mounts,
+                         (f"{self.config}:/config/jhpt.xml:ro", f"{self.root}:/d"))
